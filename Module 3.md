@@ -146,3 +146,173 @@ Just get the encrypted ciphertext and put it into decrypt function and then hex 
 
 Find the hash by bruteforcing md5 the txt file given and then put the cipher and hash and get the flag
 
+## ECB Oracle
+
+```{python}
+import requests
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Util.number import long_to_bytes, bytes_to_long
+
+def response(byte_string):
+	url = "http://aes.cryptohack.org/ecbcbcwtf/decrypt/"
+	url += byte_string.hex()
+	url += "/"
+	r = requests.get(url)
+	js = r.json()
+	return bytes.fromhex(js["plaintext"])
+
+def encrypt_flag():
+	url = "http://aes.cryptohack.org/ecbcbcwtf/encrypt_flag/"
+	r = requests.get(url)
+	js = r.json()
+	return bytes.fromhex(js["ciphertext"])
+
+def xor(a, b):
+	return long_to_bytes(bytes_to_long(a) ^ bytes_to_long(b))
+
+enc = encrypt_flag()
+
+iv = enc[:16]
+block1 = enc[16:32]
+block2 = enc[32:]
+
+decrypt_block1 = xor(response(block1), iv)
+decrypt_block2 = xor(response(block2), block1)
+print(decrypt_block1 + decrypt_block2)
+```
+
+## ECB CBC WTF
+
+```{python}
+# ECB CBC WTF
+from Crypto.Cipher import AES
+from pwn import xor
+import requests
+
+def encrypt():
+    url = "http://aes.cryptohack.org//ecbcbcwtf/encrypt_flag/"
+    response = requests.get(url)
+    return response.json()['ciphertext']
+
+flag = encrypt()
+f = [flag[i:i+32] for i in [0,32,64]]
+vi = f[0:(len(f)-1)]
+f = f[1:]
+def decrypt(data):
+    url = "http://aes.cryptohack.org/ecbcbcwtf/decrypt/"
+    response = requests.get(url + data + '/')
+    return response.json()['plaintext']
+
+for i in range(len(f)):
+    f[i] = decrypt(f[i])
+
+for i in range(len(f)):
+    f[i] = xor(bytes.fromhex(f[i]),bytes.fromhex(vi[i]))
+
+flag = ""
+for i in f:
+    flag += i.decode()
+
+print(flag)
+```
+## Flipping Cookie
+
+```{python}
+def print_blk(hex_blks, sz):
+   for i in range(0, len(hex_blks), sz):
+       print(hex_blks[i:i+sz], ' ', end='')
+   print()
+
+def flip(cookie, plain):
+    start = plain.find(b'admin=False')
+    cookie = bytes.fromhex(cookie)
+    iv = [0xff]*16
+    cipher_fake = list(cookie)
+    fake = b';admin=True;'
+    for i in range(len(fake)):
+       cipher_fake[16+i] = plain[16+i] ^ cookie[16+i] ^ fake[i]
+       iv[start+i] = plain[start+i] ^ cookie[start+i] ^ fake[i]
+
+    cipher_fake = bytes(cipher_fake).hex()
+    iv = bytes(iv).hex()
+    return cipher_fake, iv
+
+def request_cookie():
+    r = requests.get("http://aes.cryptohack.org/flipping_cookie/get_cookie/")
+    return r.json()["cookie"]
+
+def request_check_admin(cookie, iv):
+    r = requests.get("http://aes.cryptohack.org/flipping_cookie/check_admin/{}/{}/".format(cookie, iv))
+    return r.json()
+
+expires_at = (datetime.today() + timedelta(days=1)).strftime("%s")
+plain = f"admin=False;expiry={expires_at}".encode()
+cookie = request_cookie()
+cookie, iv = flip(cookie, plain)
+print(request_check_admin(cookie, iv))
+```
+
+## Symmetry
+
+```{python}
+
+from pwn import xor 
+import requests 
+
+ciphertext = "9608427a24c18a23003fbe62e6f60f171b8bb41ae480d97ff5476b008e8d04a452311e437f911c333a6343d4a489b3d182"
+ciphertext = bytes.fromhex(ciphertext)
+
+iv = ciphertext[:16]
+payload = ciphertext[16:]
+
+# flag = "crypto{0fb_15_5ymm37r1c4l_!!!11!}"
+flag = ""
+plaintext = flag.ljust(len(payload), "=")
+target = payload
+
+def encrypt(plaintext, iv): 
+    r = requests.get("http://aes.cryptohack.org/symmetry/encrypt/" + plaintext.encode().hex() + "/" + iv.hex())
+    return r.text.split(":")[1][1:-3]
+
+for i in range(33):
+    print(plaintext)
+    for j in range(33, 127): 
+        temp = plaintext 
+        temp = temp[:i] + chr(j) + temp[i + 1:] 
+        temp_c = bytes.fromhex(encrypt(temp, iv))
+        print(temp)
+        if target[:(i + 1)] == temp_c[:(i + 1)]:
+            plaintext = temp 
+            break 
+
+print(plaintext)
+
+```
+## Bean Counter
+
+```{python}
+import requests
+
+def fetch_encrypted_data():
+    url = "http://aes.cryptohack.org/bean_counter/encrypt/"
+    response = requests.get(url)
+    return response.json()['encrypted']
+
+def xor_bytes(byte_array1, byte_array2):
+    return bytes(x ^ y for x, y in zip(byte_array1, byte_array2))
+
+def main():
+    png_header = bytes([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52])
+    encrypted_data = bytes.fromhex(fetch_encrypted_data())
+
+    keystream = xor_bytes(png_header, encrypted_data[:len(png_header)])
+
+    decrypted_data = xor_bytes(encrypted_data, keystream * (len(encrypted_data) // len(keystream)))
+
+    with open('bean_counter.png', 'wb') as file:
+        file.write(decrypted_data)
+
+if __name__ == "__main__":
+    main()
+```
